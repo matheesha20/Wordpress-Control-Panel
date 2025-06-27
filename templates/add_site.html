@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+
+{% block header %}Add New WordPress Site{% endblock %}
+
+{% block header_actions %}
+<a href="{{ url_for('index') }}" class="btn btn-secondary">
+    <i class="fas fa-arrow-left"></i> Back to Dashboard
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-plus-circle"></i> Create New WordPress Installation</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" id="addSiteForm">
+                    <div class="mb-4">
+                        <label for="domain_name" class="form-label">Domain Name</label>
+                        <input type="text" class="form-control" id="domain_name" name="domain_name" 
+                               placeholder="example.com" required>
+                        <div class="form-text">Enter the domain name without http:// or www</div>
+                    </div>
+
+                    <div class="alert alert-info">
+                        <h6><i class="fas fa-info-circle"></i> What will be created:</h6>
+                        <ul class="mb-0">
+                            <li><strong>Database:</strong> wp_[domain] with dedicated user</li>
+                            <li><strong>WordPress:</strong> Latest version in /var/www/[domain]/public_html</li>
+                            <li><strong>Nginx:</strong> Virtual host configuration with proxy</li>
+                            <li><strong>FTP User:</strong> ftp_[domain] for file management</li>
+                            <li><strong>Permissions:</strong> Proper file and directory permissions</li>
+                        </ul>
+                    </div>
+
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
+                            <i class="fas fa-rocket"></i> Create WordPress Site
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Process Status (Hidden by default) -->
+        <div class="card mt-4" id="processStatus" style="display: none;">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-cogs"></i> Installation Progress</h5>
+            </div>
+            <div class="card-body">
+                <div class="progress mb-3">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                         role="progressbar" style="width: 0%" id="progressBar"></div>
+                </div>
+                <div id="statusMessages">
+                    <!-- Status messages will be added here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Requirements Check Modal -->
+<div class="modal fade" id="requirementsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">System Requirements Check</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Before creating a WordPress site, please ensure all system requirements are met:</p>
+                <ul>
+                    <li><i class="fas fa-check text-success"></i> Nginx web server</li>
+                    <li><i class="fas fa-check text-success"></i> MariaDB database server</li>
+                    <li><i class="fas fa-check text-success"></i> PHP-FPM processor</li>
+                </ul>
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    If any component is missing, run <strong>System Setup</strong> first.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <a href="{{ url_for('system_setup') }}" class="btn btn-warning">Go to System Setup</a>
+                <button type="button" class="btn btn-primary" data-bs-dismiss="modal" onclick="proceedWithCreation()">Continue Anyway</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('addSiteForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const domainName = document.getElementById('domain_name').value.trim();
+    
+    // Basic validation
+    if (!domainName) {
+        alert('Please enter a domain name');
+        return;
+    }
+    
+    // Check if domain is valid format
+    const domainRegex = /^[a-zA-Z0-9][a-zA-Z0-9-]{1,61}[a-zA-Z0-9]\.[a-zA-Z]{2,}$/;
+    if (!domainRegex.test(domainName)) {
+        alert('Please enter a valid domain name (e.g., example.com)');
+        return;
+    }
+    
+    // Show process status
+    document.getElementById('processStatus').style.display = 'block';
+    document.getElementById('submitBtn').disabled = true;
+    document.getElementById('submitBtn').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating Site...';
+    
+    // Simulate progress (in real implementation, this would be updated via WebSocket or AJAX polling)
+    updateProgress(10, 'Starting WordPress installation...');
+    
+    // Submit the form
+    setTimeout(() => {
+        this.submit();
+    }, 1000);
+});
+
+function updateProgress(percent, message) {
+    document.getElementById('progressBar').style.width = percent + '%';
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'mb-2';
+    messageDiv.innerHTML = `
+        <div class="d-flex align-items-center">
+            <i class="fas fa-check-circle text-success me-2"></i>
+            <span>${message}</span>
+            <small class="text-muted ms-auto">${new Date().toLocaleTimeString()}</small>
+        </div>
+    `;
+    document.getElementById('statusMessages').appendChild(messageDiv);
+}
+
+function proceedWithCreation() {
+    // Continue with site creation
+    document.getElementById('addSiteForm').submit();
+}
+
+// Auto-lowercase domain input
+document.getElementById('domain_name').addEventListener('input', function() {
+    this.value = this.value.toLowerCase().replace(/[^a-z0-9.-]/g, '');
+});
+</script>
+{% endblock %} 

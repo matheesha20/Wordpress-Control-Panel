@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+
+{% block header %}Site Details{% endblock %}
+
+{% block header_actions %}
+<a href="{{ url_for('index') }}" class="btn btn-secondary">
+    <i class="fas fa-arrow-left"></i> Back to Dashboard
+</a>
+{% endblock %}
+
+{% block content %}
+{% if site %}
+<div class="row">
+    <div class="col-lg-8">
+        <!-- Site Information -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fab fa-wordpress"></i> {{ site[1] }}</h5>
+                <span class="badge {% if site[8] == 'active' %}bg-success{% else %}bg-warning{% endif %}">
+                    {{ site[8].title() }}
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6><i class="fas fa-globe"></i> Domain Information</h6>
+                        <table class="table table-sm">
+                            <tr>
+                                <td><strong>Domain:</strong></td>
+                                <td>{{ site[1] }}</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Port:</strong></td>
+                                <td>{{ site[6] }}</td>
+                            </tr>
+                            <tr>
+                                <td><strong>SSL:</strong></td>
+                                <td>
+                                    {% if site[7] %}
+                                        <i class="fas fa-lock text-success"></i> Enabled
+                                    {% else %}
+                                        <i class="fas fa-unlock text-warning"></i> Not Enabled
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>Created:</strong></td>
+                                <td>{{ site[9] if site[9] else 'N/A' }}</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <div class="col-md-6">
+                        <h6><i class="fas fa-database"></i> Database Information</h6>
+                        <table class="table table-sm">
+                            <tr>
+                                <td><strong>Database:</strong></td>
+                                <td>{{ site[2] }}</td>
+                            </tr>
+                            <tr>
+                                <td><strong>User:</strong></td>
+                                <td>{{ site[3] }}</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Password:</strong></td>
+                                <td>
+                                    <span id="dbPassword" style="display: none;">{{ site[4] }}</span>
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="togglePassword()">
+                                        <i class="fas fa-eye"></i> Show
+                                    </button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>FTP User:</strong></td>
+                                <td>{{ site[5] }}</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Activity Logs -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-history"></i> Activity Logs</h5>
+            </div>
+            <div class="card-body">
+                {% if logs %}
+                <div style="max-height: 400px; overflow-y: auto;">
+                    {% for log in logs %}
+                    <div class="mb-3 border-bottom pb-2">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1">
+                                    {% if log[3] == 'success' %}
+                                        <i class="fas fa-check-circle text-success"></i>
+                                    {% elif log[3] == 'failed' %}
+                                        <i class="fas fa-times-circle text-danger"></i>
+                                    {% else %}
+                                        <i class="fas fa-info-circle text-info"></i>
+                                    {% endif %}
+                                    {{ log[2] }}
+                                </h6>
+                                {% if log[4] %}
+                                <small class="text-muted">{{ log[4] }}</small>
+                                {% endif %}
+                            </div>
+                            <small class="text-muted">{{ log[5] if log[5] else 'N/A' }}</small>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-center py-4">
+                    <i class="fas fa-clipboard-list fa-2x text-muted mb-2"></i>
+                    <p class="text-muted">No activity logs found</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <!-- Quick Actions -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-bolt"></i> Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="http://{{ site[1] }}" target="_blank" class="btn btn-primary">
+                        <i class="fas fa-external-link-alt"></i> Visit Website
+                    </a>
+                    <a href="http://{{ site[1] }}/wp-admin" target="_blank" class="btn btn-success">
+                        <i class="fab fa-wordpress"></i> WordPress Admin
+                    </a>
+                    <button class="btn btn-info" onclick="showPluginPermissions()">
+                        <i class="fas fa-shield-alt"></i> Plugin Permissions
+                    </button>
+                    <button class="btn btn-warning" onclick="showFileManager()">
+                        <i class="fas fa-folder"></i> File Manager
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Server Paths -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-folder-open"></i> Server Paths</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <td><strong>Web Root:</strong></td>
+                        <td><small>/var/www/{{ site[1] }}/public_html</small></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Nginx Config:</strong></td>
+                        <td><small>/etc/nginx/sites-available/{{ site[1] }}</small></td>
+                    </tr>
+                    <tr>
+                        <td><strong>WP Config:</strong></td>
+                        <td><small>/var/www/{{ site[1] }}/public_html/wp-config.php</small></td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+
+        <!-- Configuration Files -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-cog"></i> Configuration</h5>
+            </div>
+            <div class="card-body">
+                <div class="accordion" id="configAccordion">
+                    <div class="accordion-item">
+                        <h2 class="accordion-header" id="headingNginx">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseNginx">
+                                <i class="fab fa-nginx me-2"></i> Nginx Config
+                            </button>
+                        </h2>
+                        <div id="collapseNginx" class="accordion-collapse collapse" data-bs-parent="#configAccordion">
+                            <div class="accordion-body">
+                                <pre class="small"><code>server {
+    listen 127.0.0.1:{{ site[6] }};
+    root /var/www/{{ site[1] }}/public_html;
+    index index.php;
+
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.1-fpm.sock;
+    }
+
+    client_max_body_size 512M;
+}</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Plugin Permissions Modal -->
+<div class="modal fade" id="pluginModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Plugin Permissions</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form action="{{ url_for('plugin_permissions', site_id=site[0]) }}" method="POST">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="plugin_name" class="form-label">Plugin Folder Name</label>
+                        <input type="text" class="form-control" name="plugin_name" value="wpvividbackups">
+                        <div class="form-text">Common plugins: wpvividbackups, updraftplus, backwpup</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Apply Permissions</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- File Manager Modal -->
+<div class="modal fade" id="fileManagerModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">File Manager</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i>
+                    Use FTP client to manage files. Connect with:
+                    <br><strong>Host:</strong> {{ request.host.split(':')[0] }}
+                    <br><strong>Username:</strong> {{ site[5] }}
+                    <br><strong>Path:</strong> /var/www/{{ site[1] }}/public_html
+                </div>
+                <div class="d-grid gap-2">
+                    <button class="btn btn-primary" onclick="openFileZilla()">
+                        <i class="fas fa-download"></i> Open with FileZilla
+                    </button>
+                    <button class="btn btn-secondary" onclick="copyFTPDetails()">
+                        <i class="fas fa-copy"></i> Copy FTP Details
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% else %}
+<div class="alert alert-danger">
+    <i class="fas fa-exclamation-triangle"></i> Site not found
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function togglePassword() {
+    const passwordSpan = document.getElementById('dbPassword');
+    const button = passwordSpan.nextElementSibling;
+    
+    if (passwordSpan.style.display === 'none') {
+        passwordSpan.style.display = 'inline';
+        button.innerHTML = '<i class="fas fa-eye-slash"></i> Hide';
+    } else {
+        passwordSpan.style.display = 'none';
+        button.innerHTML = '<i class="fas fa-eye"></i> Show';
+    }
+}
+
+function showPluginPermissions() {
+    new bootstrap.Modal(document.getElementById('pluginModal')).show();
+}
+
+function showFileManager() {
+    new bootstrap.Modal(document.getElementById('fileManagerModal')).show();
+}
+
+function openFileZilla() {
+    // Create FileZilla quickconnect URL
+    const host = '{{ request.host.split(":")[0] }}';
+    const username = '{{ site[5] if site else "" }}';
+    const url = `ftp://${username}@${host}`;
+    
+    // Try to open FileZilla protocol handler
+    window.location.href = url;
+}
+
+function copyFTPDetails() {
+    const details = `Host: {{ request.host.split(':')[0] }}
+Username: {{ site[5] if site else "" }}
+Path: /var/www/{{ site[1] if site else "" }}/public_html`;
+    
+    navigator.clipboard.writeText(details).then(function() {
+        alert('FTP details copied to clipboard!');
+    });
+}
+</script>
+{% endblock %} 
