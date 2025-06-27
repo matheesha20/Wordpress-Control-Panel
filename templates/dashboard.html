@@ -130,14 +130,28 @@
                                            class="btn btn-outline-primary" title="View Details">
                                             <i class="fas fa-eye"></i>
                                         </a>
+                                        {% if site[8] == 'active' %}
                                         <a href="http://{{ site[1] }}" target="_blank" 
                                            class="btn btn-outline-success" title="Visit Site">
                                             <i class="fas fa-external-link-alt"></i>
                                         </a>
+                                        {% endif %}
+                                        {% if site[8] == 'failed' %}
+                                        <button class="btn btn-outline-warning" 
+                                                onclick="retrySetup('{{ site[0] }}', '{{ site[1] }}')" 
+                                                title="Retry Setup">
+                                            <i class="fas fa-redo"></i>
+                                        </button>
+                                        {% endif %}
                                         <button class="btn btn-outline-info" 
                                                 onclick="showPluginPermissions('{{ site[0] }}', '{{ site[1] }}')" 
                                                 title="Plugin Permissions">
                                             <i class="fas fa-shield-alt"></i>
+                                        </button>
+                                        <button class="btn btn-outline-danger" 
+                                                onclick="confirmDelete('{{ site[0] }}', '{{ site[1] }}')" 
+                                                title="Delete Site">
+                                            <i class="fas fa-trash"></i>
                                         </button>
                                     </div>
                                 </td>
@@ -187,6 +201,93 @@
         </div>
     </div>
 </div>
+
+<!-- Delete Site Confirmation Modal -->
+<div class="modal fade" id="deleteConfirmModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">
+                    <i class="fas fa-exclamation-triangle"></i> Confirm Site Deletion
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger">
+                    <h6><i class="fas fa-warning"></i> This action cannot be undone!</h6>
+                    <p class="mb-0">This will permanently delete:</p>
+                </div>
+                <ul class="mb-3">
+                    <li>WordPress installation and all files</li>
+                    <li>Database and all content</li>
+                    <li>Nginx configuration</li>
+                    <li>FTP user account</li>
+                </ul>
+                <p><strong>Site to delete:</strong> <span id="deleteModalSiteName" class="text-danger"></span></p>
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i>
+                    <strong>Backup:</strong> A backup will be created in <code>/tmp/wp-backups/</code> before deletion.
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="confirmDeleteCheck">
+                    <label class="form-check-label" for="confirmDeleteCheck">
+                        I understand this will permanently delete the site
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form id="deleteForm" method="POST" style="display: inline;">
+                    <button type="submit" class="btn btn-danger" id="confirmDeleteBtn" disabled>
+                        <i class="fas fa-trash"></i> Delete Site Permanently
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Retry Setup Confirmation Modal -->
+<div class="modal fade" id="retryConfirmModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title">
+                    <i class="fas fa-redo"></i> Retry Site Setup
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info">
+                    <h6><i class="fas fa-info-circle"></i> Smart Resume</h6>
+                    <p class="mb-0">The system will check what has already been completed and continue from where it left off.</p>
+                </div>
+                <p><strong>Site to retry:</strong> <span id="retryModalSiteName" class="text-primary"></span></p>
+                <div class="alert alert-success">
+                    <i class="fas fa-check"></i>
+                    <strong>Safe Operation:</strong> This will not damage existing components or other sites.
+                </div>
+                <h6>What will be checked and resumed:</h6>
+                <ul class="small">
+                    <li>Database creation and user setup</li>
+                    <li>WordPress download and installation</li>
+                    <li>Configuration file creation</li>
+                    <li>Nginx setup and enablement</li>
+                    <li>FTP user creation</li>
+                    <li>File permissions</li>
+                </ul>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form id="retryForm" method="POST" style="display: inline;">
+                    <button type="submit" class="btn btn-warning">
+                        <i class="fas fa-redo"></i> Retry Setup
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -196,6 +297,28 @@ function showPluginPermissions(siteId, siteName) {
     document.getElementById('pluginPermissionsForm').action = '/plugin-permissions/' + siteId;
     new bootstrap.Modal(document.getElementById('pluginPermissionsModal')).show();
 }
+
+function confirmDelete(siteId, siteName) {
+    document.getElementById('deleteModalSiteName').textContent = siteName;
+    document.getElementById('deleteForm').action = '/delete-site/' + siteId;
+    
+    // Reset checkbox
+    document.getElementById('confirmDeleteCheck').checked = false;
+    document.getElementById('confirmDeleteBtn').disabled = true;
+    
+    new bootstrap.Modal(document.getElementById('deleteConfirmModal')).show();
+}
+
+function retrySetup(siteId, siteName) {
+    document.getElementById('retryModalSiteName').textContent = siteName;
+    document.getElementById('retryForm').action = '/retry-site/' + siteId;
+    new bootstrap.Modal(document.getElementById('retryConfirmModal')).show();
+}
+
+// Enable delete button only when checkbox is checked
+document.getElementById('confirmDeleteCheck').addEventListener('change', function() {
+    document.getElementById('confirmDeleteBtn').disabled = !this.checked;
+});
 
 // Auto-refresh page every 30 seconds to update status
 setInterval(function() {

@@ -441,6 +441,368 @@ def plugin_permissions(site_id):
     conn.close()
     return redirect(url_for('site_details', site_id=site_id))
 
+@app.route('/delete-site/<int:site_id>', methods=['POST'])
+def delete_site(site_id):
+    if 'logged_in' not in session:
+        return redirect(url_for('login'))
+    
+    conn = sqlite3.connect('wordpress_control.db')
+    c = conn.cursor()
+    
+    # Get site details before deletion
+    c.execute("SELECT * FROM sites WHERE id = ?", (site_id,))
+    site = c.fetchone()
+    
+    if not site:
+        flash('Site not found')
+        return redirect(url_for('index'))
+    
+    domain_name = site[1]
+    db_name = site[2]
+    db_user = site[3]
+    ftp_user = site[5]
+    
+    try:
+        log_action(site_id, "Site Deletion Started", "info", f"Starting deletion of {domain_name}")
+        
+        # 1. Create backup before deletion (optional safety measure)
+        backup_commands = [
+            f"mkdir -p /tmp/wp-backups/{domain_name}",
+            f"mysqldump {db_name} > /tmp/wp-backups/{domain_name}/{db_name}.sql 2>/dev/null || true",
+            f"tar -czf /tmp/wp-backups/{domain_name}/files.tar.gz -C /var/www/{domain_name}/public_html . 2>/dev/null || true"
+        ]
+        
+        for cmd in backup_commands:
+            run_command(f"sudo {cmd}")
+        
+        # 2. Remove database and user
+        db_cleanup_commands = [
+            f"mysql -u root -e \"DROP DATABASE IF EXISTS {db_name};\"",
+            f"mysql -u root -e \"DROP USER IF EXISTS '{db_user}'@'localhost';\"",
+            f"mysql -u root -e \"FLUSH PRIVILEGES;\""
+        ]
+        
+        for cmd in db_cleanup_commands:
+            success, stdout, stderr = run_command(f"sudo {cmd}")
+            if success:
+                log_action(site_id, f"Database cleanup: {cmd}", "success", stdout)
+            else:
+                log_action(site_id, f"Database cleanup: {cmd}", "warning", stderr)
+        
+        # 3. Remove Nginx configuration
+        nginx_cleanup_commands = [
+            f"rm -f /etc/nginx/sites-enabled/{domain_name}",
+            f"rm -f /etc/nginx/sites-available/{domain_name}",
+            "nginx -t && systemctl reload nginx || true"
+        ]
+        
+        for cmd in nginx_cleanup_commands:
+            success, stdout, stderr = run_command(f"sudo {cmd}")
+            log_action(site_id, f"Nginx cleanup: {cmd}", "success" if success else "warning", stdout if success else stderr)
+        
+        # 4. Remove FTP user
+        ftp_cleanup_commands = [
+            f"userdel {ftp_user} 2>/dev/null || true",
+            f"groupdel {ftp_user} 2>/dev/null || true"
+        ]
+        
+        for cmd in ftp_cleanup_commands:
+            success, stdout, stderr = run_command(f"sudo {cmd}")
+            log_action(site_id, f"FTP cleanup: {cmd}", "success" if success else "info", stdout if success else stderr)
+        
+        # 5. Remove files and directories
+        file_cleanup_commands = [
+            f"rm -rf /var/www/{domain_name}"
+        ]
+        
+        for cmd in file_cleanup_commands:
+            success, stdout, stderr = run_command(f"sudo {cmd}")
+            if success:
+                log_action(site_id, f"File cleanup: {cmd}", "success", stdout)
+            else:
+                log_action(site_id, f"File cleanup: {cmd}", "warning", stderr)
+        
+        # 6. Remove from database
+        c.execute("DELETE FROM sites WHERE id = ?", (site_id,))
+        conn.commit()
+        
+        log_action(site_id, "Site Deletion Completed", "success", f"Site {domain_name} deleted successfully")
+        flash(f"Site {domain_name} has been deleted successfully. Backup saved to /tmp/wp-backups/{domain_name}/")
+        
+    except Exception as e:
+        log_action(site_id, "Site Deletion Failed", "failed", str(e))
+        flash(f"Error deleting site: {str(e)}")
+    finally:
+        conn.close()
+    
+    return redirect(url_for('index'))
+
+@app.route('/retry-site/<int:site_id>', methods=['POST'])
+def retry_site_setup(site_id):
+    if 'logged_in' not in session:
+        return redirect(url_for('login'))
+    
+    conn = sqlite3.connect('wordpress_control.db')
+    c = conn.cursor()
+    
+    # Get site details
+    c.execute("SELECT * FROM sites WHERE id = ?", (site_id,))
+    site = c.fetchone()
+    
+    if not site:
+        flash('Site not found')
+        return redirect(url_for('index'))
+    
+    domain_name = site[1]
+    db_name = site[2]
+    db_user = site[3]
+    db_password = site[4]
+    ftp_user = site[5]
+    nginx_port = site[6]
+    
+    try:
+        log_action(site_id, "Site Retry Started", "info", f"Retrying setup for {domain_name}")
+        
+        # Update status to pending
+        c.execute("UPDATE sites SET status = 'pending' WHERE id = ?", (site_id,))
+        conn.commit()
+        
+        # Check what's already completed and what needs to be done
+        setup_status = check_site_setup_status(domain_name, db_name, db_user, ftp_user, nginx_port)
+        
+        # Resume from where we left off
+        resume_site_setup(site_id, domain_name, db_name, db_user, db_password, ftp_user, nginx_port, setup_status)
+        
+        # Update status to active if successful
+        c.execute("UPDATE sites SET status = 'active' WHERE id = ?", (site_id,))
+        conn.commit()
+        
+        log_action(site_id, "Site Retry Completed", "success", f"Site {domain_name} setup completed successfully")
+        flash(f"Site {domain_name} setup completed successfully!")
+        
+    except Exception as e:
+        c.execute("UPDATE sites SET status = 'failed' WHERE id = ?", (site_id,))
+        conn.commit()
+        log_action(site_id, "Site Retry Failed", "failed", str(e))
+        flash(f"Error retrying site setup: {str(e)}")
+    finally:
+        conn.close()
+    
+    return redirect(url_for('site_details', site_id=site_id))
+
+def check_site_setup_status(domain_name, db_name, db_user, ftp_user, nginx_port):
+    """Check which parts of the site setup are already completed"""
+    status = {
+        'database_exists': False,
+        'database_user_exists': False,
+        'wordpress_downloaded': False,
+        'wp_config_exists': False,
+        'nginx_config_exists': False,
+        'nginx_enabled': False,
+        'ftp_user_exists': False,
+        'directory_exists': False
+    }
+    
+    try:
+        # Check database
+        success, stdout, stderr = run_command(f"mysql -u root -e \"USE {db_name};\"")
+        status['database_exists'] = success
+        
+        # Check database user
+        success, stdout, stderr = run_command(f"mysql -u root -e \"SELECT User FROM mysql.user WHERE User='{db_user}';\"")
+        status['database_user_exists'] = success and db_user in stdout
+        
+        # Check WordPress installation
+        wp_path = f"/var/www/{domain_name}/public_html"
+        status['directory_exists'] = os.path.exists(wp_path)
+        status['wordpress_downloaded'] = os.path.exists(f"{wp_path}/wp-config-sample.php")
+        status['wp_config_exists'] = os.path.exists(f"{wp_path}/wp-config.php")
+        
+        # Check Nginx configuration
+        nginx_config_path = f"/etc/nginx/sites-available/{domain_name}"
+        nginx_enabled_path = f"/etc/nginx/sites-enabled/{domain_name}"
+        status['nginx_config_exists'] = os.path.exists(nginx_config_path)
+        status['nginx_enabled'] = os.path.exists(nginx_enabled_path)
+        
+        # Check FTP user
+        success, stdout, stderr = run_command(f"id {ftp_user}")
+        status['ftp_user_exists'] = success
+        
+    except Exception as e:
+        log_action(None, "Setup Status Check Failed", "warning", str(e))
+    
+    return status
+
+def resume_site_setup(site_id, domain_name, db_name, db_user, db_password, ftp_user, nginx_port, status):
+    """Resume site setup from where it left off"""
+    
+    # 1. Create database if not exists
+    if not status['database_exists']:
+        success, stdout, stderr = run_command(f"sudo mysql -u root -e \"CREATE DATABASE {db_name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\"")
+        if success:
+            log_action(site_id, "Database Created", "success", f"Database {db_name} created")
+        else:
+            raise Exception(f"Failed to create database: {stderr}")
+    
+    # 2. Create database user if not exists
+    if not status['database_user_exists']:
+        commands = [
+            f"mysql -u root -e \"CREATE USER '{db_user}'@'localhost' IDENTIFIED BY '{db_password}';\"",
+            f"mysql -u root -e \"GRANT ALL ON {db_name}.* TO '{db_user}'@'localhost';\"",
+            f"mysql -u root -e \"FLUSH PRIVILEGES;\""
+        ]
+        
+        for cmd in commands:
+            success, stdout, stderr = run_command(f"sudo {cmd}")
+            if success:
+                log_action(site_id, f"Database User: {cmd}", "success", stdout)
+            else:
+                log_action(site_id, f"Database User: {cmd}", "warning", stderr)
+    
+    # 3. Create directory if not exists
+    if not status['directory_exists']:
+        commands = [
+            f"mkdir -p /var/www/{domain_name}/public_html",
+            f"chown -R www-data:www-data /var/www/{domain_name}",
+            f"chmod -R 755 /var/www"
+        ]
+        
+        for cmd in commands:
+            success, stdout, stderr = run_command(f"sudo {cmd}")
+            if success:
+                log_action(site_id, f"Directory Setup: {cmd}", "success", stdout)
+            else:
+                raise Exception(f"Failed directory setup: {stderr}")
+    
+    # 4. Download WordPress if not downloaded
+    if not status['wordpress_downloaded']:
+        wp_commands = [
+            f"bash -c 'cd /var/www/{domain_name}/public_html && wget https://wordpress.org/latest.zip'",
+            f"bash -c 'cd /var/www/{domain_name}/public_html && unzip latest.zip && mv wordpress/* . && rm -rf wordpress latest.zip'"
+        ]
+        
+        for cmd in wp_commands:
+            success, stdout, stderr = run_command(f"sudo {cmd}")
+            if success:
+                log_action(site_id, f"WordPress Download: {cmd}", "success", stdout)
+            else:
+                raise Exception(f"Failed WordPress download: {stderr}")
+    
+    # 5. Create wp-config.php if not exists
+    if not status['wp_config_exists']:
+        wp_config_content = f"""<?php
+define('DB_NAME', '{db_name}');
+define('DB_USER', '{db_user}');
+define('DB_PASSWORD', '{db_password}');
+define('DB_HOST', 'localhost');
+define('DB_CHARSET', 'utf8mb4');
+define('DB_COLLATE', 'utf8mb4_unicode_ci');
+
+$table_prefix = '{generate_db_prefix(domain_name)}';
+
+define('FS_METHOD', 'direct');
+
+// WordPress HTTPS detection for proxy setups
+if (
+    isset($_SERVER['HTTP_X_FORWARDED_PROTO']) &&
+    $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https'
+) {{
+    $_SERVER['HTTPS'] = 'on';
+}}
+
+if ( ! defined( 'ABSPATH' ) ) {{
+    define( 'ABSPATH', __DIR__ . '/' );
+}}
+
+require_once ABSPATH . 'wp-settings.php';
+"""
+        
+        wp_config_path = f"/var/www/{domain_name}/public_html/wp-config.php"
+        
+        try:
+            with open(wp_config_path, 'w') as f:
+                f.write(wp_config_content)
+            run_command(f"sudo chown www-data:www-data {wp_config_path}")
+            run_command(f"sudo chmod 644 {wp_config_path}")
+        except PermissionError:
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.php') as temp_file:
+                temp_file.write(wp_config_content)
+                temp_path = temp_file.name
+            
+            run_command(f"sudo cp {temp_path} {wp_config_path}")
+            run_command(f"sudo chown www-data:www-data {wp_config_path}")
+            run_command(f"sudo chmod 644 {wp_config_path}")
+            
+            import os
+            os.unlink(temp_path)
+        
+        log_action(site_id, "WordPress Config Created", "success", "wp-config.php created")
+    
+    # 6. Create Nginx configuration if not exists
+    if not status['nginx_config_exists']:
+        nginx_config = create_nginx_config(domain_name, nginx_port)
+        nginx_config_path = f"/etc/nginx/sites-available/{domain_name}"
+        
+        try:
+            with open(nginx_config_path, 'w') as f:
+                f.write(nginx_config)
+        except PermissionError:
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as temp_file:
+                temp_file.write(nginx_config)
+                temp_path = temp_file.name
+            
+            run_command(f"sudo cp {temp_path} {nginx_config_path}")
+            
+            import os
+            os.unlink(temp_path)
+        
+        log_action(site_id, "Nginx Config Created", "success", f"Nginx config for {domain_name} created")
+    
+    # 7. Enable Nginx site if not enabled
+    if not status['nginx_enabled']:
+        commands = [
+            f"ln -s /etc/nginx/sites-available/{domain_name} /etc/nginx/sites-enabled/",
+            "nginx -t && systemctl reload nginx"
+        ]
+        
+        for cmd in commands:
+            success, stdout, stderr = run_command(f"sudo {cmd}")
+            if success:
+                log_action(site_id, f"Nginx Enable: {cmd}", "success", stdout)
+            else:
+                log_action(site_id, f"Nginx Enable: {cmd}", "warning", stderr)
+    
+    # 8. Create FTP user if not exists
+    if not status['ftp_user_exists']:
+        ftp_password = generate_password(12)
+        commands = [
+            f"adduser --home /var/www/{domain_name}/public_html {ftp_user} --disabled-password --gecos ''",
+            f"echo '{ftp_user}:{ftp_password}' | chpasswd"
+        ]
+        
+        for cmd in commands:
+            success, stdout, stderr = run_command(f"sudo {cmd}")
+            if success:
+                log_action(site_id, f"FTP User: {cmd}", "success", stdout)
+            else:
+                log_action(site_id, f"FTP User: {cmd}", "warning", stderr)
+    
+    # 9. Set final permissions
+    permission_commands = [
+        f"chown -R www-data:www-data /var/www/{domain_name}/public_html",
+        f"find /var/www/{domain_name}/public_html -type d -exec chmod 755 {{}} \\;",
+        f"find /var/www/{domain_name}/public_html -type f -exec chmod 644 {{}} \\;"
+    ]
+    
+    for cmd in permission_commands:
+        success, stdout, stderr = run_command(f"sudo {cmd}")
+        if success:
+            log_action(site_id, f"Permissions: {cmd}", "success", stdout)
+        else:
+            log_action(site_id, f"Permissions: {cmd}", "warning", stderr)
+
 @app.route('/api/sites')
 def api_sites():
     if 'logged_in' not in session:
