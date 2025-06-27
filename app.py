@@ -228,9 +228,9 @@ def add_site():
                 f"mkdir -p /var/www/{domain_name}/public_html",
                 f"chown -R www-data:www-data /var/www/{domain_name}",
                 f"chmod -R 755 /var/www",
-                f"cd /var/www/{domain_name}/public_html && wget https://wordpress.org/latest.zip",
-                f"cd /var/www/{domain_name}/public_html && unzip latest.zip && mv wordpress/* . && rm -rf wordpress latest.zip",
-                f"cd /var/www/{domain_name}/public_html && cp wp-config-sample.php wp-config.php"
+                f"bash -c 'cd /var/www/{domain_name}/public_html && wget https://wordpress.org/latest.zip'",
+                f"bash -c 'cd /var/www/{domain_name}/public_html && unzip latest.zip && mv wordpress/* . && rm -rf wordpress latest.zip'",
+                f"bash -c 'cd /var/www/{domain_name}/public_html && cp wp-config-sample.php wp-config.php'"
             ]
             
             all_commands = db_commands + wp_commands
@@ -264,22 +264,62 @@ require_once ABSPATH . 'wp-settings.php';
 """
             
             wp_config_path = f"/var/www/{domain_name}/public_html/wp-config.php"
-            with open(wp_config_path, 'w') as f:
-                f.write(wp_config_content)
+            
+            # Write wp-config.php with proper permissions
+            try:
+                with open(wp_config_path, 'w') as f:
+                    f.write(wp_config_content)
+                # Set proper ownership after creating the file
+                run_command(f"sudo chown www-data:www-data {wp_config_path}")
+                run_command(f"sudo chmod 644 {wp_config_path}")
+            except PermissionError:
+                # If we can't write directly, use sudo to create the file
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.php') as temp_file:
+                    temp_file.write(wp_config_content)
+                    temp_path = temp_file.name
+                
+                run_command(f"sudo cp {temp_path} {wp_config_path}")
+                run_command(f"sudo chown www-data:www-data {wp_config_path}")
+                run_command(f"sudo chmod 644 {wp_config_path}")
+                
+                # Clean up temp file
+                import os
+                os.unlink(temp_path)
             
             # Create Nginx configuration
             nginx_config = create_nginx_config(domain_name, nginx_port)
             nginx_config_path = f"/etc/nginx/sites-available/{domain_name}"
             
-            with open(nginx_config_path, 'w') as f:
-                f.write(nginx_config)
+            # Write nginx config with proper permissions
+            try:
+                with open(nginx_config_path, 'w') as f:
+                    f.write(nginx_config)
+            except PermissionError:
+                # If we can't write directly, use sudo to create the file
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as temp_file:
+                    temp_file.write(nginx_config)
+                    temp_path = temp_file.name
+                
+                run_command(f"sudo cp {temp_path} {nginx_config_path}")
+                
+                # Clean up temp file
+                import os
+                os.unlink(temp_path)
             
             # Enable site
             run_command(f"sudo ln -s /etc/nginx/sites-available/{domain_name} /etc/nginx/sites-enabled/")
             run_command("sudo nginx -t && sudo systemctl reload nginx")
             
             # Create FTP user
+            ftp_password = generate_password(12)
             run_command(f"sudo adduser --home /var/www/{domain_name}/public_html {ftp_user} --disabled-password --gecos ''")
+            # Set FTP user password
+            run_command(f"echo '{ftp_user}:{ftp_password}' | sudo chpasswd")
+            
+            # Update database with FTP password for reference
+            c.execute("UPDATE sites SET db_password = ? WHERE id = ?", (f"{db_password}|FTP:{ftp_password}", site_id))
             
             # Set permissions
             permission_commands = [

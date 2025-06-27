@@ -333,6 +333,24 @@ sudo netstat -tlnp | grep :5000
 pip3 show Flask
 ```
 
+### Command Execution Errors (cd command not found)
+If you see errors like "sudo: cd: command not found":
+```bash
+# This is already fixed in the latest version
+# The issue was with shell built-in commands and sudo
+# Make sure you're using the updated app.py file
+```
+
+### File Permission Issues
+```bash
+# If WordPress installation fails due to permissions:
+sudo chown -R www-data:www-data /var/www/
+sudo chmod -R 755 /var/www/
+
+# If Nginx config creation fails:
+sudo chmod 755 /etc/nginx/sites-available/
+```
+
 ### Database Errors
 ```bash
 # Check MariaDB status
